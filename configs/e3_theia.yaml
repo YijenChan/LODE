@@ -1,0 +1,46 @@
+run_id: e3-theia-lode
+data_root: data/e3-theia
+output_root: runs
+archive_root: runs/e3-theia-archive
+protocol: data/e3-theia/protocol/e3_theia_long_trajectory.yaml
+investigation_split: test
+seed: 7
+
+event_schema:
+  entity_types: [process, file, netflow]
+  relations:
+    - EVENT_CLONE
+    - EVENT_CONNECT
+    - EVENT_EXECUTE
+    - EVENT_MODIFY_FILE_ATTRIBUTES
+    - EVENT_OPEN
+    - EVENT_READ
+    - EVENT_READ_SOCKET_PARAMS
+    - EVENT_RECVFROM
+    - EVENT_RECVMSG
+    - EVENT_SENDMSG
+    - EVENT_SENDTO
+    - EVENT_UNLINK
+    - EVENT_WRITE
+    - EVENT_WRITE_SOCKET_PARAMS
+
+pids:
+  embedding_dim: 32
+  hidden_dim: 64
+  epochs: 50
+  learning_rate: 0.001
+  batch_processes: 128
+  tbptt_steps: 128
+  window_seconds: 900
+  alert_percentile: 0.995
+
+retrieval:
+  packet_events: 24
+
+investigator:
+  model: gpt-5.5
+  max_queries: 2
+  max_context_bytes: 16384
+  max_output_tokens: 768
+  timeout_seconds: 90
+

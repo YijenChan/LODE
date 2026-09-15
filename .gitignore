@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+runs/
+data/
+*.pt
+*.npy
+*.npz
+*.parquet
+*.jsonl
+.env
+API_KEY.txt
+
