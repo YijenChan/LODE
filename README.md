@@ -2,15 +2,11 @@
 
 LODE reconstructs long-range advanced persistent threat (APT) scenarios from a fixed audit-log interval. It avoids materializing a full-history provenance graph: a process-conditioned GRU selects investigation seeds, source/destination postings retain complete event history, and a bounded LLM investigator retrieves witnessed evidence before producing direct-node judgments and an APT summary graph.
 
-This repository contains the system implementation only. Datasets, labels, baseline implementations, generated middleware, model checkpoints, and reported experimental results are not included.
-
 ## Method overview
 
 1. **Recurrent Event Anomaly Detection.** A shared GRU predicts the next typed signature `(relation, peer entity type, process role)` in each responsible-process stream. Negative log-likelihood scores are aggregated by process window and calibrated against benign validation windows.
 2. **Indexed APT Evidence Space.** Every canonical event is retained in disk-backed source and destination postings. An anchored query retrieves bounded `past/future` evidence in `earliest/near` order without constructing a NetworkX/DGL full-history graph.
 3. **Evidence-Grounded Reconstruction.** The investigator selects only visible event IDs, attaches incident evidence to every direct-node claim, and retrieves additional history through retained anchors. Deterministic checks reject unsupported output. The committed graph contains claim-relevant witnessed events and their seed connectors.
-
-The exact correspondence between the manuscript and source files is documented in [docs/methodology-alignment.md](docs/methodology-alignment.md).
 
 ## Repository layout
 
