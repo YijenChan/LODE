@@ -256,6 +256,8 @@ def train(config: dict) -> None:
     signatures = np.load(source / "sorted_signature.npy", mmap_mode="r")
     offsets = np.load(source / "owner_offsets.npy", mmap_mode="r")
     pids = config["pids"]
+    if int(pids.get("layers", 1)) != 1:
+        raise ValueError("This implementation uses the one-layer GRU reported in the paper")
     seed = int(config["seed"])
     random.seed(seed)
     np.random.seed(seed)
@@ -307,6 +309,7 @@ def train(config: dict) -> None:
                 "vocabulary": vocabulary,
                 "embedding_dim": int(pids["embedding_dim"]),
                 "hidden_dim": int(pids["hidden_dim"]),
+                "layers": 1,
                 "history": history,
                 "seed": seed,
                 "semantics": "predict signature before updating the responsible process state",
@@ -510,6 +513,7 @@ def initialize(config_path: Path, config: dict) -> None:
             "status": "running_pipeline_only",
             "scope": "LODE process-conditioned detector run",
             "seed": config["seed"],
+            "experiment_seeds": config.get("experiment_seeds", [config["seed"]]),
             "interpreter": os.sys.executable,
             "python": os.sys.version,
             "torch": torch.__version__,

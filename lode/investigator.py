@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import requests
+import tiktoken
 import yaml
 
 from .archive import Archive
@@ -29,8 +30,31 @@ def _compact(event: dict) -> list:
             event["dst"], event["ts"] // 1_000_000_000]
 
 
+def message_tokens(messages: list[dict], tokenizer: str = "o200k_base") -> int:
+    """Conservatively count a reproducible representation of the message input."""
+    encoding = tiktoken.get_encoding(tokenizer)
+    serialized = json.dumps(messages, ensure_ascii=False, separators=(",", ":"))
+    framing_reserve = 16 * (len(messages) + 1)
+    return len(encoding.encode(serialized, disallowed_special=())) + framing_reserve
+
+
+def _interleave_unique(first: list[dict], second: list[dict], limit: int) -> list[dict]:
+    result = []
+    seen = set()
+    for index in range(max(len(first), len(second))):
+        for group in (first, second):
+            if index >= len(group) or group[index]["id"] in seen:
+                continue
+            result.append(group[index])
+            seen.add(group[index]["id"])
+            if len(result) >= limit:
+                return result
+    return result
+
+
 def _messages(archive: Archive, seed: dict, selected: dict[int, dict], packet: list[dict],
-              prior_direct: list[dict], budget: int) -> tuple[list[dict], list[dict]]:
+              prior_direct: list[dict], budget: int,
+              tokenizer: str = "o200k_base") -> tuple[list[dict], list[dict], int]:
     def encode(current_packet: list[dict]) -> list[dict]:
         events = [seed] + list(selected.values()) + current_packet
         nodes = sorted({event[key] for event in events for key in ("src", "dst")})
@@ -46,12 +70,14 @@ def _messages(archive: Archive, seed: dict, selected: dict[int, dict], packet: l
 
     packet = list(packet)
     messages = encode(packet)
-    while packet and sum(len(item["content"].encode()) for item in messages) > budget:
+    tokens = message_tokens(messages, tokenizer)
+    while packet and tokens > budget:
         packet.pop()
         messages = encode(packet)
-    if sum(len(item["content"].encode()) for item in messages) > budget:
+        tokens = message_tokens(messages, tokenizer)
+    if tokens > budget:
         raise ValueError("retained evidence exceeds the configured context budget")
-    return messages, packet
+    return messages, packet, tokens
 
 
 def _call(messages: list[dict], config: dict) -> tuple[dict, dict]:
@@ -64,6 +90,7 @@ def _call(messages: list[dict], config: dict) -> tuple[dict, dict]:
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         json={"model": config["investigator"]["model"], "messages": messages,
               "max_completion_tokens": config["investigator"]["max_output_tokens"],
+              "temperature": config["investigator"]["temperature"],
               "response_format": {"type": "json_object"}},
         timeout=config["investigator"].get("timeout_seconds", 90),
     )
@@ -121,9 +148,14 @@ def run_case(archive: Archive, seed_spec: dict, config: dict) -> dict:
     seed = archive.event(seed_spec["anchor"])
     owner = int(seed_spec["owner"])
     limit = config["retrieval"]["packet_events"]
-    earliest, _ = archive.incident(owner, seed["id"], "past", "earliest", limit // 2)
-    near, _ = archive.incident(owner, seed["id"], "past", "near", limit // 2)
-    packet = list({event["id"]: event for pair in zip(earliest, near) for event in pair}.values())
+    page_budget = int(config["retrieval"]["pages_per_seed"])
+    if page_budget < 1:
+        raise ValueError("retrieval.pages_per_seed must be at least one")
+    earliest, earliest_meta = archive.incident(
+        owner, seed["id"], "past", "earliest", limit // 2
+    )
+    near, near_meta = archive.incident(owner, seed["id"], "past", "near", limit // 2)
+    packet = _interleave_unique(earliest, near, limit)
     # Add creator context only when a witnessed CLONE edge identifies the parent.
     owner_history, _ = archive.incident(owner, seed["id"], "past", "near", 4096)
     creation = next(
@@ -138,43 +170,74 @@ def run_case(archive: Archive, seed_spec: dict, config: dict) -> dict:
     selected: dict[int, dict] = {}
     direct: list[dict] = []
     calls = []
+    retrieval_pages = [{
+        "page": 1,
+        "kind": "initial",
+        "returned": len(packet),
+        "sources": [earliest_meta, near_meta],
+        "creator_context": creation is not None,
+    }]
     cursors: dict[tuple[int, int, str, str], int | None] = {}
+    stop_reason = "page_budget_exhausted"
 
-    for turn in range(config["investigator"]["max_queries"]):
-        messages, packet = _messages(
-            archive, seed, selected, packet, direct,
-            config["investigator"]["max_context_bytes"],
-        )
+    for page_index in range(page_budget):
+        try:
+            messages, packet, prompt_tokens = _messages(
+                archive, seed, selected, packet, direct,
+                int(config["investigator"]["max_prompt_tokens"]),
+                config["investigator"].get("tokenizer", "o200k_base"),
+            )
+        except Exception as error:
+            calls.append({"page": page_index + 1, "status": "rejected",
+                          "error": str(error)[:240]})
+            stop_reason = "input_budget_exhausted"
+            break
+        retrieval_pages[-1]["presented"] = len(packet)
         try:
             answer, metadata = _call(messages, config)
             candidate, candidate_direct = validate(answer, seed, selected, packet)
         except Exception as error:
-            calls.append({"turn": turn, "status": "rejected", "error": str(error)[:240]})
+            calls.append({"page": page_index + 1, "status": "rejected",
+                          "prompt_tokens": prompt_tokens, "error": str(error)[:240]})
+            stop_reason = "response_rejected"
             break
         selected, direct = candidate, candidate_direct
-        calls.append({"turn": turn, "status": "accepted", **metadata})
+        calls.append({"page": page_index + 1, "status": "accepted",
+                      "prompt_tokens": prompt_tokens, **metadata})
         query = answer.get("query")
         if answer.get("done", True) or not query:
+            stop_reason = "investigator_done"
+            break
+        if page_index + 1 >= page_budget:
+            stop_reason = "page_budget_exhausted"
             break
         visible = {event["id"]: event for event in [seed] + list(selected.values())}
         anchor = int(query.get("anchor", -1))
         node = int(query.get("node", -1))
-        if anchor not in visible or node not in (visible[anchor]["src"], visible[anchor]["dst"]):
+        side = query.get("side")
+        order = query.get("order")
+        if (anchor not in visible or node not in (visible[anchor]["src"], visible[anchor]["dst"])
+                or side not in {"past", "future"} or order not in {"earliest", "near"}):
+            stop_reason = "invalid_query"
             break
-        signature = (node, anchor, query["side"], query["order"])
+        signature = (node, anchor, side, order)
         packet, query_meta = archive.incident(
-            node, anchor, query["side"], query["order"], limit=limit,
+            node, anchor, side, order, limit=limit,
             cursor=cursors.get(signature),
         )
         cursors[signature] = query_meta["cursor"]
         already_seen = {seed["id"], *selected.keys()}
         packet = [event for event in packet if event["id"] not in already_seen]
+        retrieval_pages.append({**query_meta, "page": page_index + 2, "kind": "query",
+                                "returned": len(packet)})
         if not packet:
+            stop_reason = "no_unseen_evidence"
             break
 
     committed, audit = commit_case(list(selected.values()), [claim["node"] for claim in direct], seed["id"])
     return {"seed": seed_spec, "selected": list(selected.values()), "direct": direct,
-            "committed": committed, "commit_audit": audit, "calls": calls}
+            "committed": committed, "commit_audit": audit, "calls": calls,
+            "retrieval_pages": retrieval_pages, "stop_reason": stop_reason}
 
 
 def export(archive: Archive, cases: list[dict], output: Path) -> None:

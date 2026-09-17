@@ -3,5 +3,5 @@ psutil>=5.9
 pyarrow>=15.0
 PyYAML>=6.0
 requests>=2.31
+tiktoken>=0.9
 torch>=2.2
-

@@ -1,0 +1,29 @@
+version: 1
+manuscript: LODE
+scope: methodology and implementation settings represented by this repository
+claims:
+  - id: METHOD-DETECTOR
+    status: observed
+    statement: A shared one-layer GRU scores each event before updating the responsible process state.
+    evidence:
+      - lode/detector.py
+      - configs/e3_theia.yaml
+  - id: METHOD-ARCHIVE
+    status: observed
+    statement: Complete event history is retained in source and destination postings without a full-history provenance graph.
+    evidence:
+      - lode/archive.py
+  - id: METHOD-INVESTIGATOR
+    status: observed
+    statement: Reconstruction uses visible anchors, validated event support, and seed-connected commitment.
+    evidence:
+      - lode/investigator.py
+      - lode/commit.py
+  - id: IMPLEMENTATION-PROFILE
+    status: observed
+    statement: The reported profile uses four GRU epochs, 15-minute score windows, up to eight pages per seed, a 4096-token input cap, temperature zero, and seeds 7, 19, and 43.
+    evidence:
+      - configs/e3_theia.yaml
+      - docs/methodology-alignment.md
+limitations:
+  - Datasets, private run artifacts, baseline implementations, reference annotations, and result tables are not released in this repository.

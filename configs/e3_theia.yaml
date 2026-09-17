@@ -5,6 +5,7 @@ archive_root: runs/e3-theia-archive
 protocol: data/e3-theia/protocol/e3_theia_long_trajectory.yaml
 investigation_split: test
 seed: 7
+experiment_seeds: [7, 19, 43]
 
 event_schema:
   entity_types: [process, file, netflow]
@@ -27,7 +28,8 @@ event_schema:
 pids:
   embedding_dim: 32
   hidden_dim: 64
-  epochs: 50
+  layers: 1
+  epochs: 4
   learning_rate: 0.001
   batch_processes: 128
   tbptt_steps: 128
@@ -36,11 +38,12 @@ pids:
 
 retrieval:
   packet_events: 24
+  pages_per_seed: 8
 
 investigator:
   model: gpt-5.5
-  max_queries: 2
-  max_context_bytes: 16384
+  tokenizer: o200k_base
+  max_prompt_tokens: 4096
   max_output_tokens: 768
+  temperature: 0.0
   timeout_seconds: 90
-

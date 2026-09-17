@@ -42,6 +42,14 @@ Copy `configs/e3_theia.yaml` and update `data_root`, `output_root`,
 `archive_root`, and `protocol`. The relation vocabulary is declared explicitly
 so all splits use the same event schema.
 
+The checked-in profile matches the manuscript implementation: a one-layer GRU
+with 32-dimensional embeddings and 64 hidden units, four Adam epochs at
+`1e-3`, 15-minute process-score windows, at most eight retrieval pages per
+seed, a 4,096-token input cap, and GPT-5.5 at temperature 0. The active
+`seed` selects one run; the reported experiment seeds are recorded as
+`experiment_seeds: [7, 19, 43]`. Use a distinct `run_id` for each seed so that
+learned components are retrained rather than reused.
+
 ## Running LODE
 
 From the repository root:
@@ -84,6 +92,12 @@ requests.
 ## Reproducibility notes
 
 - Random seeds and detector hyperparameters are explicit in the YAML config.
+- The investigator counts the serialized message array with the configured
+  `o200k_base` tokenizer and trims the current packet before any API call that
+  would exceed 4,096 input tokens.
+- The initial packet is retrieval page 1; each accepted anchored query may
+  consume one further page, up to eight pages per seed. Early stopping can use
+  fewer pages.
 - Event row positions remain aligned across scoring, retrieval, and raw-reference export.
 - Archived events are never modified by LLM responses.
 - Summary-graph commitment guarantees weak seed connectivity only; directed, time-respecting connectivity is evaluated separately.
